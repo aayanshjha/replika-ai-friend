@@ -1,48 +1,67 @@
+
 import streamlit as st
 from langchain_community.chat_message_histories import ChatMessageHistory
 from langchain_core.prompts import PromptTemplate
 from langchain_ollama import OllamaLLM
-import time
-import os
-import base64
+import json, os, time, threading
 
-
-
-# ---------------- Typing Animation ---------------- #
-def type_text(text):
-    for word in text.split():
-        yield word + " "
-        time.sleep(0.04)
-
-# ---------------- Avatar Encoder ---------------- #
-def get_avatar_base64(path):
-    try:
-        with open(path, "rb") as img:
-            return base64.b64encode(img.read()).decode()
-    except FileNotFoundError:
-        return ""  # or use a default base64 avatar
-
-
-# ---------------- Streamlit Setup ---------------- #
+# -------------------- Settings --------------------
 st.set_page_config(page_title="🧠 Your AI Companion", layout="centered")
-st.markdown("<h2 style='text-align: center; color: #6c63ff;'>🤖 Replika-like AI Friend</h2>", unsafe_allow_html=True)
 
-# Load custom CSS
-with open("style.css") as f:
-    st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+# -------------------- User Profile --------------------
+PROFILE_FILE = "user_profile.json"
+MEMORY_FILE = "memory.json"
 
-# Load model
-llm = OllamaLLM(model="llama3")  # Change to mistral/phi3 if preferred
+def load_user_profile():
+    if os.path.exists(PROFILE_FILE):
+        with open(PROFILE_FILE, "r") as f:
+            return json.load(f)
+    else:
+        return {"name": "Friend", "goals": []}
 
-# Initialize memory
+def save_user_profile(profile):
+    with open(PROFILE_FILE, "w") as f:
+        json.dump(profile, f, indent=4)
+
+user = load_user_profile()
+st.title(f"👋 Hey {user['name']}! I'm your AI Companion.")
+
+# -------------------- Load & Save Reminders --------------------
+def load_reminders():
+    if not os.path.exists(MEMORY_FILE) or os.path.getsize(MEMORY_FILE) == 0:
+        return []
+    try:
+        with open(MEMORY_FILE, "r") as f:
+            data = json.load(f)
+            return data.get("reminders", [])
+    except json.JSONDecodeError:
+        return []
+
+def save_reminders(reminders):
+    with open(MEMORY_FILE, "w") as f:
+        json.dump({"reminders": reminders}, f, indent=4)
+
+# -------------------- Reminder Checker --------------------
+def reminder_loop():
+    while True:
+        now = time.strftime("%H:%M")
+        reminders = load_reminders()
+        due = [r["task"] for r in reminders if r["time"] == now]
+        if due:
+            st.toast("⏰ Reminder: " + ", ".join(due))
+        time.sleep(60)
+
+threading.Thread(target=reminder_loop, daemon=True).start()
+
+# -------------------- AI Setup --------------------
+llm = OllamaLLM(model="llama3")  # You can try "mistral" for faster results
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = ChatMessageHistory()
 
-# Prompt template
 prompt = PromptTemplate(
     input_variables=["chat_history", "question"],
     template="""
-You are a friendly and supportive AI companion. Be empathetic, kind, and helpful.
+You are a supportive and friendly AI companion who helps emotionally and practically.
 
 Previous conversation:
 {chat_history}
@@ -51,70 +70,47 @@ User: {question}
 AI:"""
 )
 
-# Voice input section
-st.markdown("🎧 <b>You can also talk to your friend!</b>", unsafe_allow_html=True)
+# -------------------- User Input & Display --------------------
+question = st.chat_input("Talk to me...")
 
-# User Input Field
-question = st.chat_input("Type your message here...")
-
-# Voice input button
-if st.button("🎙️ Speak Instead"):
-    voice_query = listen()
-    if voice_query:
-        question = voice_query
-        # Store and display voice input as message
-        st.session_state.chat_history.add_user_message(question)
-
-# Load avatars
-user_avatar_b64 = get_avatar_base64("assets/user_avatar.png")
-ai_avatar_b64 = get_avatar_base64("assets/assistant_avatar.png")
-
-# Display previous chat messages
 for msg in st.session_state.chat_history.messages:
     role = "user" if msg.type == "human" else "assistant"
-    avatar = user_avatar_b64 if role == "user" else ai_avatar_b64
-    bubble_class = "user-bubble" if role == "user" else "assistant-bubble"
+    st.chat_message(role).write(msg.content)
 
-    st.markdown(f"""
-    <div class="chat-message-container">
-        <div class="chat-message">
-            {'<img src="data:image/png;base64,' + avatar + '" class="avatar-img">' if role == 'assistant' else ''}
-            <div class="{bubble_class}">{msg.content}</div>
-            {'<img src="data:image/png;base64,' + avatar + '" class="avatar-img">' if role == 'user' else ''}
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-# Process new message
 if question:
-    # Format past conversation
     chat_history_text = "\n".join(
         [f"{msg.type.capitalize()}: {msg.content}" for msg in st.session_state.chat_history.messages]
     )
 
-    # Get response from LLM
     response = llm.invoke(prompt.format(chat_history=chat_history_text, question=question))
 
-    # Display assistant typing animation
-    message_placeholder = st.empty()
-    full_response = ""
-    for word in type_text(response):
-        full_response += word
-        message_placeholder.markdown(f"""
-        <div class="chat-message-container">
-            <div class="chat-message">
-                <img src="data:image/png;base64,{ai_avatar_b64}" class="avatar-img">
-                <div class="assistant-bubble">{full_response}</div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+    st.chat_message("user").write(question)
+    st.chat_message("assistant").write(response)
 
-    # Add both messages to chat history
     st.session_state.chat_history.add_user_message(question)
     st.session_state.chat_history.add_ai_message(response)
 
-    # Speak the response
-    speak(response)
+# -------------------- Add Reminder Form --------------------
+with st.expander("📅 Set Reminder"):
+    with st.form("reminder_form"):
+        task = st.text_input("Task")
+        time_input = st.time_input("Time (24h format)")
+        submitted = st.form_submit_button("Save")
+        if submitted:
+            reminders = load_reminders()
+            reminders.append({"task": task, "time": time_input.strftime("%H:%M")})
+            save_reminders(reminders)
+            st.success("Reminder saved!")
+
+# -------------------- Custom CSS --------------------
+st.markdown("""
+    <style>
+        .stChatMessage { padding: 10px; border-radius: 10px; }
+        .stChatMessage.user { background-color: #DCF8C6; text-align: right; }
+        .stChatMessage.assistant { background-color: #F1F0F0; text-align: left; }
+        .main { background-color: #f9f9f9; }
+    </style>
+""", unsafe_allow_html=True)
 
 
 
@@ -124,7 +120,7 @@ if question:
 
 
 
-# import streamlit as st
+#import streamlit as st
 # from langchain_community.chat_message_histories import ChatMessageHistory
 # from langchain_core.prompts import PromptTemplate
 # from langchain_ollama import OllamaLLM
