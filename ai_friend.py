@@ -2,34 +2,11 @@ import streamlit as st
 from langchain_community.chat_message_histories import ChatMessageHistory
 from langchain_core.prompts import PromptTemplate
 from langchain_ollama import OllamaLLM
-import speech_recognition as sr
-import pyttsx3
 import time
 import os
 import base64
 
-# ---------------- Voice Output ---------------- #
-engine = pyttsx3.init()
-engine.setProperty('rate', 170)
 
-def speak(text):
-    engine.say(text)
-    engine.runAndWait()
-
-# ---------------- Voice Input ---------------- #
-def listen():
-    recognizer = sr.Recognizer()
-    with sr.Microphone() as source:
-        st.info("🎤 Listening... Speak now.")
-        audio = recognizer.listen(source, phrase_time_limit=5)
-        try:
-            query = recognizer.recognize_google(audio)
-            return query
-        except sr.UnknownValueError:
-            st.warning("❌ Could not understand.")
-        except sr.RequestError:
-            st.warning("⚠️ Could not reach Google Speech API.")
-    return ""
 
 # ---------------- Typing Animation ---------------- #
 def type_text(text):
